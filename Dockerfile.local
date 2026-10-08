@@ -1,18 +1,32 @@
 # 增量构建：只替换 Go 二进制，不重建运行时。
 #
-# 为什么不直接用根目录的 Dockerfile：那份要拉 dockerfile frontend、python 基础镜像，
-# 以及 apt / NodeSource / Playwright 全套依赖，在受限网络下跑不通。本仓库的改动只影响
-# /app/artex 这一个预编译二进制，其余运行时（python / node / playwright / ripgrep 等）
-# 在 autumn27/artex:latest 里已经齐备。直接从它叠一层，既保持工具环境与线上一致，
-# 又不需要任何网络。
+# 为什么不用仓库自带的 Dockerfile：那份要拉 dockerfile frontend、python 基础镜像，以及
+# apt / NodeSource / Playwright 全套依赖，在受限网络下跑不通。本仓库的改动只影响
+# /app/artex 这一个预编译二进制，其余运行时（python / node / playwright / ripgrep /
+# nmap 等）在基础镜像里已经齐备，直接叠一层既保持工具环境与线上完全一致，
+# 又几乎不耗网络。
 #
-# 用法（见 CHANGES-custom.md「编译与部署」）：
+# ── 基础镜像来源 ────────────────────────────────────────────────────────────────
+# 原本是 `FROM autumn27/artex:latest`（官方 Docker Hub）。该仓库已不可用
+# （hub.docker.com 返回 404），因此改用我们自己的镜像，并用 digest 锁定——
+# tag 随时可能被覆盖，digest 不会。
+#
+#   镜像：ghcr.io/darkkid0/artex:base
+#   digest：sha256:5d6eb7231231af84c7da357d36c9e1fcd46dd881a3058d9185e08481cb624e10
+#   平台：linux/amd64（仅此一平台；arm64 机器需另找来源）
+#
+# 换机器 / 镜像不可用时的三条退路：
+#   1. docker pull ghcr.io/darkkid0/artex:base
+#   2. docker load  < artex-base.tar.gz        # 离线存档，~1.1GB
+#   3. 改回官方 Dockerfile 从头构建            # 网络正常时可行，不依赖任何人的镜像
+#
+# 用法（详见 DEPLOY-custom.md「编译与构建镜像」）：
 #   mkdir -p dist/amd64
 #   CGO_ENABLED=0 GOARCH=amd64 go build -tags embedui -trimpath -o dist/amd64/artex ./cmd/artex
 #   docker build -f Dockerfile.local -t artex:custom .
 #
 # 部署时 docker-compose.yml 的 image 须指向本仓库名（artex:${ARTEX_TAG:-custom}），
 # 否则 compose 会去找 autumn27/artex:custom —— 那个 tag 不存在。
-FROM autumn27/artex:latest
+FROM ghcr.io/darkkid0/artex:base@sha256:5d6eb7231231af84c7da357d36c9e1fcd46dd881a3058d9185e08481cb624e10
 COPY dist/amd64/artex /app/artex
 RUN chmod +x /app/artex

@@ -57,6 +57,34 @@ frontend、python 基础镜像和 apt/Playwright 全套，受限网络下跑不�
 docker build -f Dockerfile.local -t artex:custom .
 ```
 
+`Dockerfile.local` 的基础镜像：
+
+```
+ghcr.io/darkkid0/artex:base@sha256:5d6eb7231231af84c7da357d36c9e1fcd46dd881a3058d9185e08481cb624e10
+```
+
+用 **digest 而非 tag** 锁定 —— tag 随时可能被覆盖，digest 不会。该镜像只含运行时
+工具链（python / node 20 / playwright / ripgrep / nmap 等），`Dockerfile.local` 只往里
+替换 `/app/artex` 一个二进制。
+
+**若 `docker pull` 失败，三条退路**（按优先级）：
+
+```bash
+# ① 直接用我们的镜像
+docker pull ghcr.io/darkkid0/artex:base
+
+# ② 离线存档（~611MB，与本仓库同批维护）
+gunzip -c artex-base-2.37G.tar.gz | docker load
+docker tag autumn27/artex:latest ghcr.io/darkkid0/artex:base
+
+# ③ 网络正常时改用仓库自带的 Dockerfile 从头构建
+#    不依赖任何人的镜像，但需拉 python 基础镜像 + apt/Playwright 全套
+```
+
+> **关于上游**：官方仓库（`Autumn-27/ARTEX`，后改名 `mssky9527/ARTEX`）与其 Docker Hub
+> 镜像（`autumn27/artex`）目前均已不可用。本仓库已不依赖其中任何一个——代码在
+> `darkkid0/ARTEX`，运行时在 `ghcr.io/darkkid0/artex:base`，两者都由我们自行维护。
+
 ### 5. 部署
 
 `.env`：
@@ -84,6 +112,51 @@ bash verify-handoff.sh
 
 检查工具链、关键代码落点、编译、测试、前端类型、运行时健康、数据库迁移共 8 类，
 全绿才算部署成功。退出码非 0 表示有失败项。
+
+## 后续开发
+
+上游已不可用，本仓库即事实上的上游。日常开发流程：
+
+```bash
+git clone https://github.com/darkkid0/ARTEX.git
+cd ARTEX
+git checkout -b <你的分支>
+# ...开发...
+go build ./cmd/... ./agent/... ./server/... ./db/... ./intercept/... ./guard/...
+go test ./agent/... ./intercept/... ./db/... ./guard/... -count=1
+git push fork <你的分支>
+```
+
+**本仓库的 remote 约定**：
+
+| 名称 | 指向 | 用途 |
+|---|---|---|
+| `fork` | `darkkid0/ARTEX` | 推送目标，日常 `git push fork <branch>` |
+| `origin` | 原官方地址 | **已失效**，保留仅为记录；`git fetch origin` 会 404 |
+
+合并回主线：
+```bash
+git checkout main && git merge <你的分支>
+git push fork main:main
+```
+
+若官方仓库将来恢复，把新地址加回来即可（历史不冲突）：
+```bash
+git remote add upstream <新地址>
+git fetch upstream --tags
+git merge upstream/main
+```
+
+## 备份
+
+以下资产需自行保管，GitHub 与 Docker Hub 都不保证长期可用：
+
+| 资产 | 位置 |
+|---|---|
+| 运行时基础镜像 | `ghcr.io/darkkid0/artex:base`（digest 见「编译与构建镜像」） |
+| 同上离线副本 | `artex-base-2.37G.tar.gz`（~611MB，含 `.sha256`） |
+| 定制版镜像 | `ghcr.io/darkkid0/artex:<commit>`，或本地 `artex:custom` |
+| 数据库 | `docker exec artex-postgres-1 pg_dump -U artex -d artex -Fc > backup.dump` |
 
 ## 数据库迁移
 

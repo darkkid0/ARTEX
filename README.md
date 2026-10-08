@@ -1,3 +1,13 @@
+> [!IMPORTANT]
+> **这是定制分支（fork 自 [Autumn-27/ARTEX](https://github.com/Autumn-27/ARTEX)），非官方原版。**
+>
+> 相对官方多了「操作员授权（`override`）」机制与若干提示词修复。
+> **部署方式与下方《安装》章节不同** —— 不能直接 `docker compose up` 拉官方镜像，
+> 必须本地编译（受限网络下用 `Dockerfile.local`，不用仓库自带的 `Dockerfile`）。
+>
+> 👉 完整流程见 **[DEPLOY-custom.md](DEPLOY-custom.md)**；部署后请跑 `bash verify-handoff.sh` 自检。
+> 与官方版的差异、已知遗留问题见同一文档。
+
 <div align="center">
 
 # ARTEX

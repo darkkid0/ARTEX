@@ -156,9 +156,32 @@ case "$base_from" in
     pass "Dockerfile.local 基础镜像：${base_from##*@}" ;;
   '') info "无 Dockerfile.local" ;;
 esac
-for f in build-image.sh build.sh install.sh .env.example; do
+for f in build-image.sh build.sh install.sh update.sh .env.example; do
   [ -f "$f" ] && pass "$f 就位" || bad "缺 $f"
 done
+
+# 上游仓库已不可达，但 Go 模块依赖 github.com/Autumn-27/norma 仍需从模块代理
+# 获取（仓库内无 vendor/）。代理若不再缓存该版本，新机将完全无法编译——这是
+# 当前最大的单点依赖，值得每次自检都确认一次。
+norma=$(grep -oE 'github\.com/Autumn-27/norma v[^ ]+' go.mod 2>/dev/null | head -1 | awk '{print $2}')
+if [ -n "$norma" ]; then
+  # 已下载 = 编译无需联网。用 go.mod 而非 go list -m 取版本：后者在依赖缺失时
+  # 自己也会失败，会把"取不到模块"误报成"未启用该依赖"。
+  if [ -d "vendor/github.com/Autumn-27/norma" ] \
+     || go list -m -f '{{.Dir}}' github.com/Autumn-27/norma 2>/dev/null | grep -q .; then
+    pass "norma ${norma} 已就绪（模块缓存或 vendor）"
+  elif [ "${SKIP_NET:-0}" = "1" ]; then
+    info "norma ${norma} 未下载（SKIP_NET=1，跳过网络探测）"
+  elif timeout 90 go mod download github.com/Autumn-27/norma 2>/dev/null; then
+    pass "norma ${norma} 可从模块代理获取"
+  else
+    bad "norma ${norma} 无法从模块代理获取 —— 新机将无法编译。
+         上游 github.com/Autumn-27/norma 已 404，仓库内也无 vendor/。
+         退路：把 GOMODCACHE 里该模块目录打包，或改用完整 vendor/ 目录。"
+  fi
+else
+  info "go.mod 未声明 norma 依赖"
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then

@@ -12,7 +12,16 @@ import (
 
 // Repo 是发布源。写死而不是做成配置项：更新源可配等于给任何能改配置的人一条
 // 远程代码执行通道，对一个渗透测试平台来说这个口子开不得。
-const Repo = "Autumn-27/artex"
+//
+// 指向本定制分支的上游。上游 Autumn-27/artex 已不可达（api.github.com 对其
+// releases/latest 返回 403/404），保持原值会让「系统配置 → 版本与更新」里的
+// 检查更新永远失败。
+//
+// 注意：应用内更新走 GitHub Releases，需要先在该仓库发布带二进制资产的正式
+// 版本才会有内容可拉；没有 release 时会提示"尚未发布任何正式版本"，这是预期
+// 行为。想避免误升级，保持该仓库无 release 即可——更新链路仍受 allowedHosts
+// 白名单 + SHA256SUMS 双重校验保护。
+const Repo = "darkkid0/ARTEX"
 
 // latestURL 是 GitHub 的"最新正式版"接口。它会自动跳过 prerelease 和 draft。
 const latestURL = "https://api.github.com/repos/" + Repo + "/releases/latest"

@@ -14,7 +14,12 @@ web/node_modules/
 web/.next/
 web/tsconfig.tsbuildinfo
 web/next-env.d.ts
-*.local
+
+# 前端本地配置（.env.local 等）。注意别用通配的 *.local——那会连带忽略
+# Dockerfile.local，而它是受限网络下唯一能用的镜像构建文件（见 Dockerfile.local 注释）。
+*.env.local
+*.env.*.local
+config.local.json
 
 # development tools
 .playwright-mcp/

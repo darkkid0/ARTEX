@@ -1,0 +1,18 @@
+# 增量构建：只替换 Go 二进制，不重建运行时。
+#
+# 为什么不直接用根目录的 Dockerfile：那份要拉 dockerfile frontend、python 基础镜像，
+# 以及 apt / NodeSource / Playwright 全套依赖，在受限网络下跑不通。本仓库的改动只影响
+# /app/artex 这一个预编译二进制，其余运行时（python / node / playwright / ripgrep 等）
+# 在 autumn27/artex:latest 里已经齐备。直接从它叠一层，既保持工具环境与线上一致，
+# 又不需要任何网络。
+#
+# 用法（见 CHANGES-custom.md「编译与部署」）：
+#   mkdir -p dist/amd64
+#   CGO_ENABLED=0 GOARCH=amd64 go build -tags embedui -trimpath -o dist/amd64/artex ./cmd/artex
+#   docker build -f Dockerfile.local -t artex:custom .
+#
+# 部署时 docker-compose.yml 的 image 须指向本仓库名（artex:${ARTEX_TAG:-custom}），
+# 否则 compose 会去找 autumn27/artex:custom —— 那个 tag 不存在。
+FROM autumn27/artex:latest
+COPY dist/amd64/artex /app/artex
+RUN chmod +x /app/artex

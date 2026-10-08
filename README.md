@@ -76,10 +76,38 @@ AI 自主渗透测试系统（Go 后端 + Next.js 前端）
 
 > 依赖数据库 **PostgreSQL**；探索需配置 **LLM**（`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`，也可在 UI 里配）。
 
+### 定制版部署（自建镜像）
+
+> **这一节仅适用于本定制分支。** 官方版的 `docker compose up -d` 依赖 Docker Hub 上的
+> `autumn27/artex` 镜像，该仓库已下线（返回 404）；下方《方式一》《方式二》是官方原文，
+> 其中的 clone 地址与镜像名对本分支均不适用，请按本节执行。
+
+```bash
+git clone https://github.com/darkkid0/ARTEX.git   # 本定制版
+cd ARTEX
+
+./build-image.sh --check     # 预检工具链（Go 1.26+ / Node / Docker），缺什么给安装命令
+./build-image.sh             # 构建前端 → 编译内嵌二进制 → docker build → artex:custom
+
+cp .env.example .env         # 填 POSTGRES_PASSWORD，可选 ANTHROPIC_API_KEY
+docker compose up -d         # → http://localhost:8787
+bash verify-handoff.sh       # 8+1 类自检，全绿才算部署成功
+```
+
+`./build-image.sh` 会自动按宿主架构选 `GOARCH`，缺 `rsync`/`zip` 也能跑
+（前者退化为 `cp -a`，后者仅影响 `build.sh --release` 打包）。
+
+镜像基础层取自公开镜像 `ghcr.io/darkkid0/artex:base`（`Dockerfile.local` 内以 digest
+锁定），**无需 `docker login`、无需任何令牌**。若你的网络访问 GHCR 受限，
+离线 tar 的 `docker load` 退路见 [DEPLOY-custom.md](DEPLOY-custom.md#4-构建镜像)。
+
+工具链手动安装（含国内镜像源）、自定义镜像名、`ARTEX_IMAGE`/`ARTEX_TAG` 覆盖方式、
+以及后续开发流程，均见 **[DEPLOY-custom.md](DEPLOY-custom.md)**。
+
 ### 方式一：一键安装脚本（推荐）
 
 ```bash
-git clone https://github.com/Autumn-27/ARTEX.git
+git clone https://github.com/darkkid0/ARTEX.git   # 定制版；官方原版为 Autumn-27/ARTEX（已不可达）
 cd ARTEX
 ./install.sh
 ```
@@ -94,12 +122,15 @@ cd ARTEX
 ### 方式二：Docker Compose（手动）
 
 ```bash
-git clone https://github.com/Autumn-27/ARTEX.git
+git clone https://github.com/darkkid0/ARTEX.git   # 定制版；官方原版为 Autumn-27/ARTEX（已不可达）
 cd ARTEX
 cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
-docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
+docker compose up -d          # postgres + 本地镜像（artex:custom，需先用 ./build-image.sh 构建）
 # → http://localhost:8787
 ```
+
+> `compose` 默认使用本地构建产物 `artex:custom`（`pull_policy: missing`）。
+> 想直接拉预构建镜像，在 `.env` 里设 `ARTEX_IMAGE=ghcr.io/darkkid0/artex` 即可。
 
 镜像已含常用工具（ripgrep/curl/vim/npm/nmap…）；`./skills` 与 `./data` 以绑定挂载持久化。
 
@@ -165,6 +196,9 @@ ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 - **更新会中断正在运行的任务**——更新即重启，请在空闲时进行。
 - **开发构建不给更新**：版本号是 `dev` 或 `git describe` 带后缀时禁用，避免正式版覆盖掉本地调试的二进制。
 - **Docker 下只换程序、不换镜像**：镜像里的 playwright / nmap 等工具链不会跟着升级，且 `docker compose up -d` 重建容器后会退回镜像自带的版本。要连镜像一起升级仍请用 `docker compose pull artex && docker compose up -d artex`。
+  > **定制分支注意**：本仓库的镜像默认是**本地构建产物**，没有可 pull 的远程版本（上游 Docker Hub 已下线）。
+  > 正确做法是重新构建再重启：`./build-image.sh && docker compose up -d artex`。
+  > 若你在 `.env` 里设了 `ARTEX_IMAGE=ghcr.io/darkkid0/artex`，`pull` 才会去 registry 拉。
 - 访问 GitHub 需要代理时，在同一页面配置**全局代理**即可，更新链路会走它。更新只从 GitHub 域名下载并强制 HTTPS。
 
 ### 方式二：一键更新脚本
@@ -176,19 +210,28 @@ cd ARTEX
 
 脚本先可选 `git pull` 拉取最新代码，再让你选 **① Docker 更新** 或 **② 本地编译更新**（与 `install.sh` 对应）：
 
-- **① Docker**：可指定目标镜像 tag（回车沿用 `.env` 的 `ARTEX_TAG`，缺省 `latest`）→ `docker compose pull` → `docker compose up -d`（换新镜像重启即自动迁移）。
+- **① Docker**：可指定目标镜像 tag（回车沿用 `.env` 的 `ARTEX_TAG`）→ `docker compose pull` → `docker compose up -d`（换新镜像重启即自动迁移）。
 - **② 本地**：重建前端静态产物 → 重新编译 `./artex`（完成后重启进程生效）。
+
+> **定制分支注意**：`update.sh` 沿用官方的 Docker 更新路径，会 `docker compose pull`。
+> 定制版的镜像是本地构建产物，`pull` 拉不到东西 —— 请改用：
+> ```bash
+> git pull && ./build-image.sh && docker compose up -d artex
+> ```
 
 ### 方式三：Docker Compose（手动）
 
 ```bash
 cd ARTEX
 git pull                       # 更新 compose / 脚本（可选）
-# 指定版本：在 .env 设 ARTEX_TAG=v0.2.0；不设则用 latest
-docker compose pull artex
+# 定制版默认 ARTEX_TAG=custom（本地构建产物）；改 tag 前请先确保该镜像在本机存在
 docker compose up -d artex     # 换新镜像重启 → 自动迁移 schema
 docker image prune -f          # 清理旧镜像（可选）
 ```
+
+> **定制分支注意**：这里**不需要** `docker compose pull artex`。本仓库镜像来自本地构建，
+> 上游 Docker Hub 已下线；`docker-compose.yml` 里 `pull_policy: missing`，本机已有镜像
+> 就直接用。更新镜像请走 `./build-image.sh`（见上一节）。
 
 ### 方式四：预编译二进制（Releases）
 

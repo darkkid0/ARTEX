@@ -41,8 +41,31 @@ update_docker(){
   # 只动 artex：postgres 是固定的 16-alpine，不需要跟着升级（拉它纯属浪费带宽，
   # 且大版本变动还会有兼容风险）。artex 声明了 depends_on postgres，所以带服务名
   # up 时若 pg 没起会自动拉起，已在跑的则原样保留、不重建。
-  info "拉取新镜像（仅 artex）…"
-  docker compose pull artex
+  #
+  # 镜像来源分两种，不能一律 pull：
+  #   · 本地构建产物（默认 artex:custom）—— registry 里根本没有这个 tag，pull 必然失败。
+  #     正确做法是重新构建（build-image.sh 会自动按宿主架构选 GOARCH 并复用已装的前端依赖）。
+  #   · 远端镜像（.env 里 ARTEX_IMAGE 指向 ghcr.io 等）—— 正常 pull。
+  local img_name
+  img_name="$(grep -E '^ARTEX_IMAGE=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'\''[:space:]' || true)"
+  img_name="${img_name:-artex}"
+
+  case "$img_name" in
+    */*)  # ghcr.io/... 之类，属远端镜像
+      info "拉取新镜像 ${img_name}（仅 artex）…"
+      docker compose pull artex || die "拉取失败：${img_name}。请检查 .env 的 ARTEX_IMAGE/ARTEX_TAG 与网络"
+      ;;
+    *)
+      warn "ARTEX_IMAGE=${img_name}（本地镜像名，无对应远端仓库）—— 改为从源码重新构建"
+      local build_tag="${tag:-}"
+      [ -n "$build_tag" ] || build_tag="$(grep -E '^ARTEX_TAG=' .env | head -1 | cut -d= -f2- | tr -d '"'\''[:space:]' || true)"
+      [ -n "$build_tag" ] || build_tag="custom"
+      info "重新构建镜像 ${img_name}:${build_tag}…"
+      ./build-image.sh -i "$img_name" -t "$build_tag" \
+        || die "构建失败，请检查上方输出（工具链缺失时可用 ./build-image.sh --check 自检）"
+      ;;
+  esac
+
   info "重建并启动（artex 重启时自动迁移 schema）…"
   docker compose up -d artex
   ok "更新完成 → http://localhost:8787"

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/guard"
 	"github.com/Autumn-27/artex/intercept"
@@ -23,9 +24,46 @@ import (
 const judgeWorkerLane = "judge"
 
 // chatGuard returns a guard wired with the manager's interceptor, used for chat
-// conversations. Called once per applyLLM so a new LLM config always gets a fresh guard.
+// conversations. Called once per applyLLM so a new LLM config always get a fresh guard.
 func (s *Server) chatGuard() *guard.Guard {
 	return guard.NewWithInterceptor(s.m.interceptor)
+}
+
+// wireTaskAuthorizations teaches the guard how to find the operator's explicit
+// authorizations for whatever task the current tool call belongs to.
+//
+// The task id reaches the guard on the same context.Context the PreToolUse hook
+// receives: agent run → agentcore.Run → harness.Query → loop.ctx → Hooks.PreToolUse
+// (see harness/query.go + harness/tools.go), and the id itself rides along via
+// agent.WithRunInfo. guard can't import agent (agent already depends on guard), so
+// this is wired as a function variable like agent.PromptOverride.
+//
+// Only kind='override' rows qualify, and only ones a human wrote — which db already
+// enforces: override is accepted from the constraints HTTP API and from the main agent
+// (t.worker=="human"), and refused from the goals decomposer and the workers.
+func (s *Server) wireTaskAuthorizations() {
+	guard.TaskAuthorizations = func(ctx context.Context) []string {
+		ri := agent.RunInfoFrom(ctx)
+		if ri.TaskID <= 0 {
+			return nil // chat sessions and non-task runs: nothing to authorize against
+		}
+		// Manager.Task is keyed by the string form of the id (server/manager.go).
+		t, ok := s.m.Task(strconv.FormatInt(ri.TaskID, 10))
+		if !ok || t == nil || t.Store == nil {
+			return nil
+		}
+		rows, err := t.Store.ListConstraints()
+		if err != nil {
+			return nil
+		}
+		var out []string
+		for _, c := range rows {
+			if c.Kind == "override" && strings.TrimSpace(c.Text) != "" {
+				out = append(out, strings.TrimSpace(c.Text))
+			}
+		}
+		return out
+	}
 }
 
 // wireInterceptReviewer installs the LLM fallback judge into the interceptor. The
@@ -125,7 +163,7 @@ func (s *Server) interceptCreateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	rule, err := pg.CreateInterceptRule(req.Name, req.MatchTarget, req.MatchType, req.Pattern, req.Action, req.Message, req.Priority, req.Enabled, req.TimeoutEnabled, req.TimeoutSeconds, req.TimeoutAction)
+	rule, err := pg.CreateInterceptRule(req.Name, req.MatchTarget, req.MatchType, req.Pattern, req.Action, req.Message, req.Priority, req.Enabled, req.TimeoutEnabled, req.TimeoutSeconds, req.TimeoutAction, req.HonorOverride)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -153,7 +191,7 @@ func (s *Server) interceptUpdateRule(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	rule, err := pg.UpdateInterceptRule(id, req.Name, req.MatchTarget, req.MatchType, req.Pattern, req.Action, req.Message, req.Priority, req.Enabled, req.TimeoutEnabled, req.TimeoutSeconds, req.TimeoutAction)
+	rule, err := pg.UpdateInterceptRule(id, req.Name, req.MatchTarget, req.MatchType, req.Pattern, req.Action, req.Message, req.Priority, req.Enabled, req.TimeoutEnabled, req.TimeoutSeconds, req.TimeoutAction, req.HonorOverride)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -476,6 +514,10 @@ type interceptRuleReq struct {
 	TimeoutEnabled bool   `json:"timeout_enabled"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 	TimeoutAction  string `json:"timeout_action"`
+	// HonorOverride lets this rule's deny be waived by an operator authorization for
+	// the task. Only meaningful for deny rules; validateInterceptRuleReq rejects it on
+	// allow/ask so an accidental flag can't quietly relax a non-blocking rule.
+	HonorOverride bool `json:"honor_override"`
 }
 
 func validateInterceptRuleReq(req interceptRuleReq) error {
@@ -499,6 +541,11 @@ func validateInterceptRuleReq(req interceptRuleReq) error {
 	case "allow", "deny", "ask":
 	default:
 		return fmt.Errorf("action 必须是 allow、deny 或 ask")
+	}
+	// honour_override 只对 deny 有意义：allow 规则本就不拦，ask 规则走的是人工审批
+	// 而不是授权豁免。允许它出现在这两类上只会让配置含义模糊，故显式拒绝。
+	if req.HonorOverride && req.Action != "deny" {
+		return fmt.Errorf("honor_override 只对 action=deny 的规则有意义（当前 action=%s）", req.Action)
 	}
 	if req.MatchType == "regex" {
 		if _, err := regexp.Compile(req.Pattern); err != nil {

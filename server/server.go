@@ -255,7 +255,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s.restoreTaskRuntimes()
 	go s.reconcileConcurrency()
 	s.startTaskArchiveWorker()
-	s.wireInterceptReviewer() // LLM 兜底审批:未命中拦截规则的命令交给模型判定
+	s.wireInterceptReviewer()  // LLM 兜底审批:未命中拦截规则的命令交给模型判定
+	s.wireTaskAuthorizations() // honor_override 的 deny 规则:把本任务的操作员授权交给裁判复核
 	return s
 }
 

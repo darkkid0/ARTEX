@@ -499,6 +499,7 @@ func (s *Server) seedOrchestrationTools() {
 	s.reseedMainAgentPrompt()         // mainagent 提示词加入「目标达成后 add_intent 反问是否建目标」(一次性)
 	s.reseedPlannerPrompt()           // planner 提示词:重写「0 意图」正当理由 + 加量化验收核对(一次性)
 	s.reseedWorkerPrompt()            // worker 提示词:加否定结论证据门槛(一次性)
+	s.reseedBuiltinPrompts()          // planner/mainagent/worker/auto/pentest/reporter/retester 提示词:加入「人类/主 agent 明确指令视为已获授权」(一次性)
 	s.seedReporterAgent()             // 预置「报告撰写」agent + 工具绑定 + finding 触发器(一次性)
 	s.upgradeReporterTriggerMessage() // 老库补迁移:让 reporter 回传 evidence_version(一次性)
 	s.seedFindingTrafficTools()       // 增加可选证据参数及只读证据工具，保留用户配置
@@ -514,7 +515,7 @@ func (s *Server) seedOrchestrationTools() {
 // reaches an old DB otherwise. Preserves each tool's agent binding + enabled flag.
 // Bump the flag whenever these tools' schemas/descriptions change in code.
 func (s *Server) refreshBuiltinToolSchemas() {
-	const flag = "tool_schema_refresh_v7_list_facts_paging"
+	const flag = "tool_schema_refresh_v9_node_detail_asset_neighbors"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
@@ -532,7 +533,12 @@ func (s *Server) refreshBuiltinToolSchemas() {
 	//     SeedTool 首插入only，旧库已 seed 的 schema 否则收不到这个新参数。
 	//   - list_facts：改为分页，新增 limit/before/q 入参；旧库已 seed 的空 schema 否则
 	//     在工具管理页显示「无参数」，模型也拿不到这几个参数说明。
-	refreshBuiltin := map[string]bool{"goal_met": true, "insert_assets": true, "list_facts": true}
+	//   - set_constraints：描述里补上「人类/主 agent 的明确指令视为已获授权，可直接登记为
+	//     type=allow」，模型才知道该怎么登记操作员口头下达的约束。
+	//   - node_detail：描述与"未找到节点"报错里原本让模型去用 asset_neighbors —— 那个工具
+	//     从来没被实现过（不在工具表、不在本仓库、也不在 norma SDK），模型一被指过去必然
+	//     调用失败再浪费一轮。改成只指向真实存在的 list_assets。
+	refreshBuiltin := map[string]bool{"goal_met": true, "insert_assets": true, "list_facts": true, "set_constraints": true, "node_detail": true}
 	for _, sd := range agent.BuiltinToolSeeds() {
 		if !refreshBuiltin[sd.Key] {
 			continue
@@ -682,6 +688,62 @@ func (s *Server) reseedWorkerPrompt() {
 		return
 	}
 	log.Printf("[prompts] worker 提示词已追加新默认版本(查上下文段收敛为 list_assets/list_findings,去掉 list_facts/node_detail/asset_neighbors,一次性)")
+}
+
+// reseedBuiltinPrompts 把内置 agent 的段[A] 正文统一刷成【当前代码默认】——本次变更是
+// 给 planner/mainagent/worker/auto/pentest/reporter/retester 的默认正文加入
+// 「人类/主 agent 的明确指令视为已获授权,不受本提示中其他限制约束」这一条,并顺手修掉
+// 若干被批量替换搞坏的句子。
+//
+// 为什么需要这一层:SeedPromptIfEmpty 只在首次插入(db/config.go 的 SeedPromptIfEmpty),
+// 所以改了 Go 里的默认常量重启后,已有库里那一份旧正文不会被更新。上面的 reseedXxxPrompt
+// 就是逐个 agent 干这件事的;这里用一个通用实现覆盖全部受影响的 agent,免得再复制一份
+// 同构函数。语义与它们完全一致:settings flag 守卫只做一次;先把当前正文与代码默认比对,
+// 已相等就跳过(全新库 seedPrompts 已写入最新默认,不会产生重复版本);不相等则用版本管理
+// 【追加一个新版本】并切过去,旧版本仍留在历史里,用户若自定义过可从版本记录找回。
+//
+// 刻意只列【本次真的改了正文】的 agent:漏掉一个,它就永远停在旧提示词上;多列一个
+// 没改的,就会平白覆盖用户在 UI 里的自定义。改 Go 常量后记得同步这张表并 bump flag。
+func (s *Server) reseedBuiltinPrompts() {
+	const flag = "builtin_prompts_human_directive_v2"
+	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
+		return
+	}
+	defer func() { _ = s.m.pg.SetSetting(flag, "true") }() // 无论成功与否只尝试一次
+
+	// 用切片而非 map:刷新顺序固定,日志可复现。
+	targets := []struct{ key, tmpl string }{
+		{"planner", agent.BuiltinPromptSeeds()["planner"]},
+		{"mainagent", agent.BuiltinPromptSeeds()["mainagent"]},
+		{"worker", agent.BuiltinPromptSeeds()["worker"]},
+		{"auto", agent.BuiltinPromptSeeds()["auto"]},
+		{"pentest", agent.BuiltinPromptSeeds()["pentest"]},
+		// reporter/retester 是自定义 agent,不在 BuiltinPromptSeeds 里,默认正文各自一份常量。
+		{"reporter", agent.ReporterDefaultPrompt},
+		{"retester", agent.RetesterDefaultPrompt},
+	}
+	for _, t := range targets {
+		if t.tmpl == "" {
+			log.Printf("[prompts] %s 无内置默认正文,跳过", t.key)
+			continue
+		}
+		a, err := s.m.pg.GetAgentByKey(t.key)
+		if err != nil || a == nil {
+			// agent 行还没建(全新库、或该 agent 被删过):seedPrompts/seedReporterAgent
+			// 会直接写入最新默认,这里什么都不用做。
+			log.Printf("[prompts] %s agent 不存在,跳过重刷 (%v)", t.key, err)
+			continue
+		}
+		// 当前版本已等于代码默认 → 已经是新默认(全新库 seed,或已刷过),不追加重复版本。
+		if cur, err := s.m.pg.CurrentPrompt(a.ID); err == nil && cur == t.tmpl {
+			continue
+		}
+		if _, err := s.m.pg.ResetPromptToDefault(a.ID, t.tmpl); err != nil {
+			log.Printf("[prompts] %s 提示词重刷为新默认失败: %v", t.key, err)
+			continue
+		}
+		log.Printf("[prompts] %s 提示词已追加新默认版本(加入「人类/主 agent 明确指令视为已获授权」,并修复批量替换损坏的语句)", t.key)
+	}
 }
 
 // reporterToolCallMessage 必须无条件要求先读一次 get_finding_traffic 再写报告。

@@ -10,20 +10,25 @@ import (
 
 // InterceptRule is one row of intercept_rules.
 type InterceptRule struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Enabled        bool      `json:"enabled"`
-	Priority       int       `json:"priority"`
-	MatchTarget    string    `json:"match_target"`
-	MatchType      string    `json:"match_type"`
-	Pattern        string    `json:"pattern"`
-	Action         string    `json:"action"`
-	Message        string    `json:"message"`
-	TimeoutEnabled bool      `json:"timeout_enabled"`
-	TimeoutSeconds int       `json:"timeout_seconds"`
-	TimeoutAction  string    `json:"timeout_action"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	Enabled        bool   `json:"enabled"`
+	Priority       int    `json:"priority"`
+	MatchTarget    string `json:"match_target"`
+	MatchType      string `json:"match_type"`
+	Pattern        string `json:"pattern"`
+	Action         string `json:"action"`
+	Message        string `json:"message"`
+	TimeoutEnabled bool   `json:"timeout_enabled"`
+	TimeoutSeconds int    `json:"timeout_seconds"`
+	TimeoutAction  string `json:"timeout_action"`
+	// HonorOverride lets this deny rule be waived by an operator authorization
+	// recorded for the task (task_constraints.kind='override'). False = the rule is
+	// absolute. Never flip it on from a free-text authorization: it turns this rule
+	// from a hard gate into a suggestion, so it must be a deliberate per-rule choice.
+	HonorOverride bool      `json:"honor_override"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // InterceptPending is one row of intercept_pending.
@@ -42,13 +47,13 @@ type InterceptPending struct {
 	CreatedAt      time.Time       `json:"created_at"`
 }
 
-const interceptRuleCols = `id, name, enabled, priority, match_target, match_type, pattern, action, message, timeout_enabled, timeout_seconds, timeout_action, created_at, updated_at`
+const interceptRuleCols = `id, name, enabled, priority, match_target, match_type, pattern, action, message, timeout_enabled, timeout_seconds, timeout_action, honor_override, created_at, updated_at`
 
 func scanInterceptRule(row interface{ Scan(...any) error }) (InterceptRule, error) {
 	var r InterceptRule
 	err := row.Scan(&r.ID, &r.Name, &r.Enabled, &r.Priority,
 		&r.MatchTarget, &r.MatchType, &r.Pattern, &r.Action, &r.Message,
-		&r.TimeoutEnabled, &r.TimeoutSeconds, &r.TimeoutAction,
+		&r.TimeoutEnabled, &r.TimeoutSeconds, &r.TimeoutAction, &r.HonorOverride,
 		&r.CreatedAt, &r.UpdatedAt)
 	return r, err
 }
@@ -72,25 +77,25 @@ func (d *DB) ListInterceptRules() ([]InterceptRule, error) {
 }
 
 // CreateInterceptRule inserts a new rule.
-func (d *DB) CreateInterceptRule(name, matchTarget, matchType, pattern, action, message string, priority int, enabled bool, timeoutEnabled bool, timeoutSeconds int, timeoutAction string) (InterceptRule, error) {
+func (d *DB) CreateInterceptRule(name, matchTarget, matchType, pattern, action, message string, priority int, enabled bool, timeoutEnabled bool, timeoutSeconds int, timeoutAction string, honorOverride bool) (InterceptRule, error) {
 	row := d.QueryRow(`
-INSERT INTO intercept_rules(name, enabled, priority, match_target, match_type, pattern, action, message, timeout_enabled, timeout_seconds, timeout_action)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO intercept_rules(name, enabled, priority, match_target, match_type, pattern, action, message, timeout_enabled, timeout_seconds, timeout_action, honor_override)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING `+interceptRuleCols,
-		name, enabled, priority, matchTarget, matchType, pattern, action, message, timeoutEnabled, timeoutSeconds, timeoutAction)
+		name, enabled, priority, matchTarget, matchType, pattern, action, message, timeoutEnabled, timeoutSeconds, timeoutAction, honorOverride)
 	return scanInterceptRule(row)
 }
 
 // UpdateInterceptRule replaces all editable fields of an existing rule.
-func (d *DB) UpdateInterceptRule(id int64, name, matchTarget, matchType, pattern, action, message string, priority int, enabled bool, timeoutEnabled bool, timeoutSeconds int, timeoutAction string) (InterceptRule, error) {
+func (d *DB) UpdateInterceptRule(id int64, name, matchTarget, matchType, pattern, action, message string, priority int, enabled bool, timeoutEnabled bool, timeoutSeconds int, timeoutAction string, honorOverride bool) (InterceptRule, error) {
 	row := d.QueryRow(`
 UPDATE intercept_rules
    SET name=$2, enabled=$3, priority=$4, match_target=$5,
        match_type=$6, pattern=$7, action=$8, message=$9,
-       timeout_enabled=$10, timeout_seconds=$11, timeout_action=$12
+       timeout_enabled=$10, timeout_seconds=$11, timeout_action=$12, honor_override=$13
 WHERE id=$1
 RETURNING `+interceptRuleCols,
-		id, name, enabled, priority, matchTarget, matchType, pattern, action, message, timeoutEnabled, timeoutSeconds, timeoutAction)
+		id, name, enabled, priority, matchTarget, matchType, pattern, action, message, timeoutEnabled, timeoutSeconds, timeoutAction, honorOverride)
 	return scanInterceptRule(row)
 }
 

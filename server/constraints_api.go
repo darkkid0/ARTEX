@@ -45,7 +45,7 @@ func (s *Server) listConstraints(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"constraints": constraintDTOs(rows)})
 }
 
-// addConstraint 人工新增一条操作约束(kind=allow|deny)。不通知 planner。
+// addConstraint 人工新增一条操作约束(kind=allow|deny|override)。不通知 planner。
 func (s *Server) addConstraint(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.m.Task(r.PathValue("id"))
 	if !ok {
@@ -73,7 +73,7 @@ func (s *Server) addConstraint(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := normalizeConstraintKind(body.Kind)
 	if kind == "" {
-		writeErr(w, 400, "kind 必须是 allow 或 deny")
+		writeErr(w, 400, constraintKindErr)
 		return
 	}
 	id, err := t.Store.AddConstraint(kind, text, "human")
@@ -117,7 +117,7 @@ func (s *Server) editConstraint(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := normalizeConstraintKind(body.Kind)
 	if kind == "" {
-		writeErr(w, 400, "kind 必须是 allow 或 deny")
+		writeErr(w, 400, constraintKindErr)
 		return
 	}
 	if err := t.Store.UpdateConstraint(cid, kind, text); err != nil {
@@ -152,14 +152,18 @@ func (s *Server) deleteConstraint(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-// normalizeConstraintKind lowercases + validates the kind; "" on invalid.
+// normalizeConstraintKind lowercases + validates the kind; "" on invalid. Accepts
+// override because a human registering one here IS the operator authorization path
+// (the other one is the main agent transcribing an instruction — see set_constraints).
 func normalizeConstraintKind(k string) string {
 	k = strings.TrimSpace(strings.ToLower(k))
-	if k == "allow" || k == "deny" {
+	if db.ValidConstraintKind(k) {
 		return k
 	}
 	return ""
 }
+
+const constraintKindErr = "kind 必须是 allow / deny / override(操作员明确授权)"
 
 // constraintDTOs converts db rows to the frontend shape.
 func constraintDTOs(in []db.Constraint) []ConstraintDTO {

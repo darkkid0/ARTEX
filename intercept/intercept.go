@@ -295,6 +295,10 @@ type Decision struct {
 	TimeoutEnabled   bool
 	TimeoutSeconds   int
 	TimeoutAction    string // "deny" | "allow"
+	// HonorOverride mirrors the rule's setting: this deny may be waived by an operator
+	// authorization for the task. guard reads it to decide whether to escalate to the
+	// judge instead of blocking outright.
+	HonorOverride bool
 }
 
 // --- LLM fallback judge ---
@@ -525,6 +529,7 @@ func (i *Interceptor) Match(toolName string, input []byte) (Decision, bool) {
 				TimeoutEnabled: r.TimeoutEnabled,
 				TimeoutSeconds: r.TimeoutSeconds,
 				TimeoutAction:  r.TimeoutAction,
+				HonorOverride:  r.HonorOverride,
 			}, true
 		}
 	}

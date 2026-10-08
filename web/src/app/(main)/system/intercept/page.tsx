@@ -156,6 +156,7 @@ type RuleForm = {
   timeout_enabled: boolean;
   timeout_seconds: number;
   timeout_action: "deny" | "allow";
+  honor_override: boolean;
 };
 
 const defaultForm = (): RuleForm => ({
@@ -170,6 +171,7 @@ const defaultForm = (): RuleForm => ({
   timeout_enabled: true,
   timeout_seconds: 60,
   timeout_action: "deny",
+  honor_override: false,
 });
 
 // ---- small components ----
@@ -513,7 +515,7 @@ export default function InterceptPage() {
       match_target: rule.match_target, match_type: rule.match_type,
       pattern: rule.pattern, action: rule.action, message: rule.message,
       timeout_enabled: rule.timeout_enabled, timeout_seconds: rule.timeout_seconds,
-      timeout_action: rule.timeout_action,
+      timeout_action: rule.timeout_action, honor_override: rule.honor_override,
     });
     setRegexErr("");
     setOpen(true);
@@ -898,6 +900,27 @@ export default function InterceptPage() {
                     </Field>
                   </div>
                 )}
+              </>
+            )}
+
+            {form.action === "deny" && (
+              <>
+                <Separator />
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium">允许操作员授权豁免</p>
+                    <p className="text-xs text-muted-foreground">
+                      关闭时本规则是<b>绝对</b>的：命中即拦截，不接受任何豁免。<br />
+                      打开后，若操作员在任务总览「操作约束」里登记过一条「授权」（<code>override</code>），
+                      系统会先请裁判复核该授权是否确实覆盖本次动作——覆盖则放行，不覆盖仍按本规则拦截。
+                      内置的安全网默认都是关闭的，建议逐条评估后再开。
+                    </p>
+                  </div>
+                  <Switch
+                    checked={form.honor_override}
+                    onCheckedChange={(v) => set({ honor_override: v })}
+                  />
+                </div>
               </>
             )}
 

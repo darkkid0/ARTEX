@@ -280,20 +280,27 @@ CREATE TABLE IF NOT EXISTS exploration_anchors (
 );
 CREATE INDEX IF NOT EXISTS idx_anchor_asset ON exploration_anchors(asset_id);
 
--- task_constraints: operator-authored operation constraints (allow/deny) for a task.
+-- task_constraints: operator-authored operation constraints for a task.
+-- kind: allow / deny 框定探索边界;override 是操作员对本任务的【明确授权】——它只由人
+-- (主 agent 转达或总览「约束管理」人工登记)写入,覆盖上面 allow/deny 清单的冲突项。
 -- Extracted by the goals decomposer at round 0 (from goal/description), editable at
 -- runtime by the main agent + 总览「约束管理」. Injected into the planner/worker system
 -- prompt each round (config-gated) to keep exploration within the operator's boundary.
 CREATE TABLE IF NOT EXISTS task_constraints (
     id             BIGSERIAL PRIMARY KEY,
     exploration_id BIGINT NOT NULL REFERENCES explorations(id) ON DELETE CASCADE,
-    kind           TEXT NOT NULL CHECK (kind IN ('allow','deny')),
+    kind           TEXT NOT NULL CHECK (kind IN ('allow','deny','override')),
     text           TEXT NOT NULL,
     origin         TEXT,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_task_constraints_exp ON task_constraints(exploration_id);
+-- CREATE TABLE IF NOT EXISTS 不会改动已存在的表,旧库的 CHECK 里没有 'override' →
+-- 人一旦登记授权就撞约束错误。幂等重建。
+ALTER TABLE task_constraints DROP CONSTRAINT IF EXISTS task_constraints_kind_check;
+ALTER TABLE task_constraints ADD CONSTRAINT task_constraints_kind_check
+    CHECK (kind IN ('allow','deny','override'));
 
 CREATE TABLE IF NOT EXISTS activity (
     id                 BIGSERIAL PRIMARY KEY,
@@ -1043,9 +1050,17 @@ CREATE TABLE IF NOT EXISTS intercept_rules (
     timeout_enabled BOOLEAN NOT NULL DEFAULT true,
     timeout_seconds INTEGER NOT NULL DEFAULT 60,
     timeout_action  TEXT    NOT NULL DEFAULT 'deny',
+    -- honor_override：这条 deny 规则能否被【操作员对该任务的明确授权】豁免。
+    -- 默认 false —— 内置规则是最后一道防误删/防破坏的安全网，绝不能因为一条自由文本
+    -- 授权就整体失守。要开必须人工在 UI 上逐条勾选；开启后命中 deny 时不直接拦，而是把
+    -- 该任务的 operator_authorizations 交给 LLM 裁判判断是否确实被授权覆盖（见
+    -- guard.applyIntercept 与 intercept.JudgeContextBoundary）。
+    honor_override  BOOLEAN NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- CREATE TABLE IF NOT EXISTS 不改已存在的表，旧库需要补列。幂等。
+ALTER TABLE intercept_rules ADD COLUMN IF NOT EXISTS honor_override BOOLEAN NOT NULL DEFAULT false;
 DROP TRIGGER IF EXISTS trg_intercept_rules_upd ON intercept_rules;
 CREATE TRIGGER trg_intercept_rules_upd BEFORE UPDATE ON intercept_rules
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();

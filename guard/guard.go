@@ -10,6 +10,7 @@ package guard
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sync"
 	"time"
@@ -78,6 +79,24 @@ func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
 	return g.applyIntercept(ctx, ev)
 }
 
+// TaskAuthorizations reports the operator's explicit authorizations for the task this
+// tool call belongs to (task_constraints rows with kind='override'). Wired by the
+// server to a lookup keyed on the run's task id, which rides the same context.Context
+// the PreToolUse hook receives.
+//
+// guard cannot import agent (agent already depends on guard), so the lookup is injected
+// as a function variable — same pattern as agent.PromptOverride / agent.ToolResolve.
+// Returning nil means "no appeal available" and the deny rule stands.
+var TaskAuthorizations func(ctx context.Context) []string
+
+// taskAuthorizations is the nil-safe accessor for TaskAuthorizations.
+func (g *Guard) taskAuthorizations(ctx context.Context) []string {
+	if TaskAuthorizations == nil {
+		return nil
+	}
+	return TaskAuthorizations(ctx)
+}
+
 // applyIntercept evaluates user-configured intercept rules against the tool call.
 // Both rules and the fallback judge receive the complete tool input.
 func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
@@ -89,6 +108,22 @@ func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
 	}
 	ctx = intercept.WithCall(ctx, ev.ToolName, ev.Input)
 	dec, matched := g.interceptor.Match(ev.ToolName, ev.Input)
+	if matched && dec.Action == "deny" && dec.HonorOverride {
+		// The rule is not absolute: the operator may have explicitly authorized this
+		// action for this task. Escalate to the judge WITH those authorizations rather
+		// than blocking outright — the judge is the component that can tell whether
+		// "允许导出订单数据" actually covers `DELETE /api/orders/8821`. A plain block
+		// here would defeat the authorization; an unconditional allow would defeat the
+		// rule. Either way we fall back to blocking when there is nothing to appeal to.
+		if auths := g.taskAuthorizations(ctx); len(auths) > 0 {
+			jctx := intercept.WithOperatorAuthorizations(ctx, auths)
+			if d, judged := g.interceptor.Judge(jctx, ev.ToolName, ev.Input); judged {
+				g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), d, ev.ToolName, ev.Input,
+					fmt.Sprintf("honor_override(%s)", dec.RuleName))
+				dec = d
+			}
+		}
+	}
 	if !matched {
 		// No rule matched. Ask the LLM fallback judge (if enabled); when it is off
 		// or unwired, keep current behavior and allow.

@@ -594,10 +594,15 @@ export function OverviewTab({ taskId }: { taskId: string }) {
             >
               <NativeSelectOption value="deny">禁止</NativeSelectOption>
               <NativeSelectOption value="allow">允许</NativeSelectOption>
+              <NativeSelectOption value="override">授权（优先于禁止）</NativeSelectOption>
             </NativeSelect>
             <Input
               className="h-7 min-w-56 flex-1 text-sm"
-              placeholder="一条操作约束，如『仅测当前端口，不扫其他端口』"
+              placeholder={
+                conKind === "override"
+                  ? "一条操作员授权，如『允许导出本任务目标站点的订单数据』"
+                  : "一条操作约束，如『仅测当前端口，不扫其他端口』"
+              }
               value={conText}
               onChange={(e) => setConText(e.target.value)}
               onKeyDown={(e) => {
@@ -628,6 +633,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                     >
                       <NativeSelectOption value="deny">禁止</NativeSelectOption>
                       <NativeSelectOption value="allow">允许</NativeSelectOption>
+                      <NativeSelectOption value="override">授权（优先于禁止）</NativeSelectOption>
                     </NativeSelect>
                     <Input
                       className="h-7 min-w-56 flex-1 text-sm"
@@ -665,10 +671,12 @@ export function OverviewTab({ taskId }: { taskId: string }) {
                       className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
                         c.kind === "allow"
                           ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                          : "bg-red-500/15 text-red-600 dark:text-red-400"
+                          : c.kind === "override"
+                            ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                            : "bg-red-500/15 text-red-600 dark:text-red-400"
                       }`}
                     >
-                      {c.kind === "allow" ? "允许" : "禁止"}
+                      {c.kind === "allow" ? "允许" : c.kind === "override" ? "授权" : "禁止"}
                     </span>
                     <span className="min-w-0 flex-1 break-words">{c.text}</span>
                     <Button
@@ -696,6 +704,8 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           ) : (
             <p className="text-muted-foreground text-sm">
               暂无操作约束。建任务时会自动从描述/目标抽取；也可在此手动增删改，用来框定「允许/禁止做哪些操作」。
+              <br />
+              「授权」条目代表你对本任务的明确放行，<b>优先于</b>上面的禁止清单——worker 遇到冲突时按它执行。
             </p>
           )}
         </CardContent>

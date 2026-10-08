@@ -990,7 +990,7 @@ func compactFact(n *db.Node) map[string]any {
 }
 
 func (t *ToolSet) nodeDetail() actool.CoreTool {
-	return t.readExpTool("node_detail", "按 id 取本任务或直接关联任务的【探索图节点】完整内容。继承节点带 source_task_id/inherited=true 且只读。仅限 list_facts/list_findings/graph_overview 返回的探索节点 id；资产请用 list_assets/asset_neighbors。",
+	return t.readExpTool("node_detail", "按 id 取本任务或直接关联任务的【探索图节点】完整内容。继承节点带 source_task_id/inherited=true 且只读。仅限 list_facts/list_findings/graph_overview 返回的探索节点 id；资产请用 list_assets（DSL 按 domain/ip/root_domain/url 等字段搜，或用 id/ids 直取）。",
 		obj(map[string]any{"id": idp("探索图节点 id(非资产 id)")}, "id"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -1006,7 +1006,7 @@ func (t *ToolSet) nodeDetail() actool.CoreTool {
 				return actool.Errorf(err.Error()), nil
 			}
 			if n == nil {
-				return actool.Errorf(fmt.Sprintf("未找到探索节点 %d。若你想查的是资产，请用 list_assets / asset_neighbors（资产与探索节点是不同的 id 空间，资产 id 不能传给 node_detail）。", id)), nil
+				return actool.Errorf(fmt.Sprintf("未找到探索节点 %d。若你想查的是资产，请用 list_assets（资产与探索节点是不同的 id 空间，资产 id 不能传给 node_detail）。", id)), nil
 			}
 			if err := t.ts.PopulateFindingTrafficIDs([]*db.Node{n}); err != nil {
 				return actool.Errorf(err.Error()), nil
@@ -1541,7 +1541,7 @@ func (t *ToolSet) setGoals() actool.CoreTool {
 
 type constraintItem struct {
 	Text string `json:"text"`
-	Type string `json:"type"` // allow | deny
+	Type string `json:"type"` // allow | deny | override
 }
 
 // addOneConstraint 落一条操作约束到 task_constraints。origin 取 t.worker(缺省 system):
@@ -1555,25 +1555,34 @@ func (t *ToolSet) addOneConstraint(it constraintItem) (int64, error) {
 	if kind == "" {
 		kind = "deny" // 默认按禁止处理:未标注类型时更保守
 	}
-	if kind != "allow" && kind != "deny" {
-		return 0, fmt.Errorf("type 必须是 allow 或 deny")
+	if kind != "allow" && kind != "deny" && kind != "override" {
+		return 0, fmt.Errorf("type 必须是 allow / deny / override")
+	}
+	// override 是操作员的明确授权,只允许人写:主 agent 转达操作员原话时 t.worker=="human"
+	// (见 mainagent.go 的 NewToolSet(ts,"human")),或人工在总览「约束管理」里登记(走 HTTP
+	// API,不经过本工具)。拆解器|goals / planner / worker 这些自动抽取的来源一律拒绝——
+	// 否则模型等于可以自己给自己发授权,豁免形同虚设。
+	if kind == "override" && t.worker != "human" {
+		return 0, fmt.Errorf("type=override(操作员明确授权)只能由主 agent 转达操作员原话时登记,不能由 %s 自动抽取", t.worker)
 	}
 	return t.ts.AddConstraint(kind, text, t.worker)
 }
 
-// setConstraints 给【本任务】新增操作约束(allow=允许做什么 / deny=禁止做什么)。既是目标
-// 拆解器 round-0 抽约束的提交工具,也是主 agent 运行时补约束的工具——同一受管工具,可在 web
-// 端改描述/schema、按 agent 绑定。约束会被注入 planner/worker 的系统提示以约束探索边界。
+// setConstraints 给【本任务】新增操作约束(allow=允许做什么 / deny=禁止做什么 /
+// override=操作员明确授权)。既是目标拆解器 round-0 抽约束的提交工具,也是主 agent
+// 转达操作员授权的工具——同一受管工具,可在 web 端改描述/schema、按 agent 绑定。约束会被
+// 注入 planner/worker 的系统提示以约束探索边界。
 func (t *ToolSet) setConstraints() actool.CoreTool {
 	return writeTool("set_constraints",
-		"给【本任务】新增操作约束,用来框定探索边界:type=allow(允许做的操作)或 deny(禁止做的操作)。\n"+
+		"给【本任务】新增操作约束,用来框定探索边界:type=allow(允许做的操作) / deny(禁止做的操作) / override(操作员明确授权)。\n"+
 			"约束=对『可以/不可以做哪些操作』的规定(如『仅测当前端口,不扫其他端口』『禁止对生产库做写操作』『只允许被动侦察』),不是目标、也不是攻击步骤。\n"+
+			"★type=override:当操作员(人)明确要求你做出与上面 allow/deny 冲突的动作时,把【他的原话要做的那个动作】登记成 override——它会优先于 allow/deny 注入下游提示,worker 不会再拒绝。只有人写的授权才算数,禁止自己臆造 override。\n"+
 			"★优先批量:多条放进 constraints 数组一次提交,返回 ids 与之等长同序(失败项 id=0,详情见 errors)。单条则省略 constraints 直接给顶层 text/type。\n"+
 			"只登记任务目标/描述里【明确写出】的约束,不要臆造;拿不准类型时用 deny(更保守)。",
 		obj(map[string]any{
-			"constraints": map[string]any{"type": "array", "description": "【优先用这个】要新增的约束数组,按顺序处理。每个元素:text(必填,一条约束)+ type(allow|deny)。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
+			"constraints": map[string]any{"type": "array", "description": "【优先用这个】要新增的约束数组,按顺序处理。每个元素:text(必填,一条约束)+ type(allow|deny|override)。返回 ids 与本数组等长、同序。", "items": map[string]any{"type": "object"}},
 			"text":        str("[单条] 一条操作约束的内容"),
-			"type":        str("[单条] allow(允许)或 deny(禁止);缺省按 deny 处理"),
+			"type":        str("[单条] allow(允许)/ deny(禁止)/ override(操作员明确授权,优先于前两者);缺省按 deny 处理"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			if t.ts == nil {

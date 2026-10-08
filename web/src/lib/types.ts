@@ -457,7 +457,8 @@ export interface TaskGoal {
 }
 
 // 约束管理卡片用的操作约束(allow=允许 / deny=禁止)。
-export type ConstraintKind = "allow" | "deny";
+// override = 操作员对本任务的明确授权，优先于 allow/deny（见 db.Constraint）。
+export type ConstraintKind = "allow" | "deny" | "override";
 export interface TaskConstraint {
   id: string;
   kind: ConstraintKind;
@@ -1267,6 +1268,9 @@ export interface InterceptRule {
   timeout_enabled: boolean;
   timeout_seconds: number;
   timeout_action: "deny" | "allow";
+  // 仅 deny 规则可用：允许本任务的操作员明确授权（task_constraints kind=override）豁免这条规则。
+  // 关闭时规则是绝对的 —— 内置的安全网默认都是关的。
+  honor_override: boolean;
   created_at: string;
   updated_at: string;
 }

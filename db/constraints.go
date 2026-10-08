@@ -2,27 +2,50 @@ package db
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
-// Constraint is one operator-authored operation constraint for a task: kind=allow
-// (permitted operations) or kind=deny (forbidden operations), free-text. Stored in
-// task_constraints, keyed by exploration_id (cascades with the exploration).
+// Constraint is one operator-authored operation constraint for a task, free-text,
+// stored in task_constraints keyed by exploration_id (cascades with the exploration).
+// Three kinds:
+//   - allow — permitted operations (frames what may be explored)
+//   - deny  — forbidden operations (frames what must not be touched)
+//   - override — the operator's explicit authorization for THIS task. It outranks both
+//     above when they conflict. Only humans write it (the main agent transcribing an
+//     operator instruction, or a human via 总览「约束管理」); the goals decomposer must
+//     never synthesize one, since that would let the model authorize itself.
 type Constraint struct {
 	ID        int64     `json:"id"`
-	Kind      string    `json:"kind"` // allow | deny
+	Kind      string    `json:"kind"` // allow | deny | override
 	Text      string    `json:"text"`
 	Origin    string    `json:"origin,omitempty"` // goals | human | system
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ListConstraints returns this exploration's constraints, allow before deny, oldest
-// first within each group (stable render order for the prompt block + UI).
+// ConstraintKinds are the accepted kind values. override is deliberately last: it is
+// the operator override, not a boundary the decomposer may infer.
+var ConstraintKinds = []string{"allow", "deny", "override"}
+
+// ValidConstraintKind reports whether kind is an accepted constraint kind.
+func ValidConstraintKind(kind string) bool {
+	for _, k := range ConstraintKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// ListConstraints returns this exploration's constraints ordered override → allow →
+// deny, oldest first within each group. Render order matters: the prompt block puts the
+// operator's authorizations FIRST so they are the most recent thing read before the
+// allow/deny lists, and so the UI shows the authoritative items on top.
 func (s *ExplorationStore) ListConstraints() ([]Constraint, error) {
 	rows, err := s.db.Query(`
 SELECT id, kind, text, COALESCE(origin,''), created_at
 FROM task_constraints WHERE exploration_id=$1
-ORDER BY (kind='deny'), id`, s.expID)
+ORDER BY CASE kind WHEN 'override' THEN 0 WHEN 'allow' THEN 1 ELSE 2 END, id`, s.expID)
 	if err != nil {
 		return nil, err
 	}
@@ -38,10 +61,11 @@ ORDER BY (kind='deny'), id`, s.expID)
 	return out, rows.Err()
 }
 
-// AddConstraint inserts one constraint (kind must be allow|deny) and returns its id.
+// AddConstraint inserts one constraint (kind must be allow|deny|override) and returns
+// its id.
 func (s *ExplorationStore) AddConstraint(kind, text, origin string) (int64, error) {
-	if kind != "allow" && kind != "deny" {
-		return 0, fmt.Errorf("kind 必须是 allow 或 deny")
+	if !ValidConstraintKind(kind) {
+		return 0, fmt.Errorf("kind 必须是 %s", strings.Join(ConstraintKinds, " / "))
 	}
 	if origin == "" {
 		origin = "system"
@@ -56,8 +80,8 @@ VALUES ($1, $2, $3, $4) RETURNING id`, s.expID, kind, text, origin).Scan(&id)
 // UpdateConstraint rewrites a constraint's kind + text; scoped to this exploration.
 // Returns an error if no such constraint exists.
 func (s *ExplorationStore) UpdateConstraint(id int64, kind, text string) error {
-	if kind != "allow" && kind != "deny" {
-		return fmt.Errorf("kind 必须是 allow 或 deny")
+	if !ValidConstraintKind(kind) {
+		return fmt.Errorf("kind 必须是 %s", strings.Join(ConstraintKinds, " / "))
 	}
 	res, err := s.db.Exec(`
 UPDATE task_constraints SET kind=$1, text=$2, updated_at=now()

@@ -39,8 +39,13 @@ if command -v go >/dev/null 2>&1; then
     go1.2[6-9]*) pass "Go $v" ;;
     *) bad "Go $v —— 需要 1.26 或更高（-tags embedui 与 go.mod 的 go 1.26.3 要求）" ;;
   esac
+elif [ -x /usr/local/go/bin/go ]; then
+  # go 按官方 tar 装到 /usr/local/go，但 /usr/local/go/bin 往往不在 PATH 里。
+  # 这是最常见的「明明装了 go 却提示未找到」，单独指出并给出可直接用的修法。
+  bad "Go 未在 PATH 中，但 /usr/local/go/bin/go 存在（$(/usr/local/go/bin/go version | awk '{print $3}')）
+         修：export PATH=/usr/local/go/bin:\$PATH"
 else
-  bad "未找到 go"
+  bad "未找到 go（安装：https://go.dev/dl/ ；Linux tar 装到 /usr/local/go 后需 export PATH）"
 fi
 command -v node >/dev/null 2>&1 && pass "Node $(node -v)" || bad "未找到 node"
 command -v npm  >/dev/null 2>&1 && pass "npm $(npm -v)"  || bad "未找到 npm"
@@ -164,7 +169,13 @@ done
 # vendor/）。third_party/goproxy 存放了本地副本，这里校验它是否与 go.mod 声明一致、
 # 能否在完全断网（代理链以 off 结尾）时提供该模块。
 norma=$(grep -oE 'github\.com/Autumn-27/norma v[^ ]+' go.mod 2>/dev/null | head -1 | awk '{print $2}')
-if [ -n "$norma" ]; then
+if [ -z "$norma" ]; then
+  info "go.mod 未声明 norma 依赖"
+elif ! command -v go >/dev/null 2>&1; then
+  # Go 不在 PATH 时第 1 节已报过缺失，这里不再重复报成 norma 专属故障——
+  # 那会把「环境缺 go」误报成「norma 副本损坏」，比不检查更糟。
+  info "未检测到 Go（第 1 节已报），跳过 norma 解析验证"
+else
   vdir="third_party/goproxy/github.com/!autumn-27/norma/@v"
   if [ -f "$vdir/$norma.zip" ] && [ -f "$vdir/$norma.mod" ] && [ -f "$vdir/$norma.info" ]; then
     if [ "${SKIP_NET:-0}" = "1" ]; then
@@ -184,8 +195,6 @@ if [ -n "$norma" ]; then
          上游 github.com/Autumn-27/norma 已 404 且仓库内无 vendor/，
          代理若响应 takedown 则新机无法编译。抓取方法见 third_party/goproxy/README.md"
   fi
-else
-  info "go.mod 未声明 norma 依赖"
 fi
 
 echo

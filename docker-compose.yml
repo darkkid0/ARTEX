@@ -15,7 +15,18 @@ services:
     restart: unless-stopped
 
   artex:
-    image: autumn27/artex:${ARTEX_TAG:-latest}
+    # 镜像名可经 .env 覆盖（ARTEX_IMAGE / ARTEX_TAG）。
+    #
+    # 默认值指向**本地构建产物** `artex:custom`，由 ./build-image.sh 生成，
+    # 基础镜像来自我们自己的公开镜像 ghcr.io/darkkid0/artex:base。
+    # 官方原版写的是 `autumn27/artex:${ARTEX_TAG:-latest}`，但该 Docker Hub
+    # 仓库已下线（返回 404），保留会让任何新机在 `docker compose pull` 直接失败。
+    #
+    # 想直接用预构建镜像：在 .env 里设 ARTEX_IMAGE=ghcr.io/darkkid0/artex。
+    image: ${ARTEX_IMAGE:-artex}:${ARTEX_TAG:-custom}
+    # 本地构建产物（artex:custom）已在本机 → 直接用，不去 registry 找；
+    # 若 .env 把 ARTEX_IMAGE 指到 ghcr.io 且本机没有 → 自动拉取。两种用法都成立。
+    pull_policy: ${ARTEX_PULL_POLICY:-missing}
     depends_on:
       postgres:
         condition: service_healthy

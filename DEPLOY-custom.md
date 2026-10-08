@@ -8,6 +8,17 @@
 
 ## 新机器部署
 
+> **最短路径**（推荐）：
+> ```bash
+> git clone https://github.com/darkkid0/ARTEX.git && cd ARTEX
+> ./build-image.sh --check      # 预检工具链，缺什么会给出可执行的安装命令
+> ./build-image.sh              # 编译前端 + 二进制 + 构建镜像 artex:custom
+> cp .env.example .env          # 填 POSTGRES_PASSWORD
+> docker compose up -d          # → http://localhost:8787
+> ```
+> 不需要手动改 `docker-compose.yml`（已改好），不需要 `docker login`，
+> 不需要 rsync / zip。下面是各步骤的展开说明。
+
 ### 1. 取代码
 
 ```bash
@@ -18,7 +29,8 @@ git log --oneline -1        # 确认是定制提交，非官方 fd86f3c
 
 ### 2. 装工具链
 
-需要 Go 1.26+ 与 Node 20+。网络受限时用镜像源：
+需要 Go 1.26+ 与 Node 20+。`./build-image.sh --check` 会一次性检查并对缺失项
+给出安装命令。网络受限时用镜像源：
 
 ```bash
 export PATH=/usr/local/go/bin:$PATH
@@ -32,6 +44,9 @@ tar -C /usr/local -xzf go1.26.8.linux-amd64.tar.gz
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs
 npm config set registry https://registry.npmmirror.com/
 ```
+
+`rsync` 与 `zip` **非必需**：前者缺省时构建脚本自动退化为 `cp -a`，后者只影响
+`build.sh --release` 的打包步骤。两者在 Debian/Ubuntu 最小镜像里都不预装。
 
 ### 3. 编译
 
@@ -48,13 +63,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedui -trimpath \
 
 `-tags embedui` 会把 `server/webui/dist/` 内嵌进二进制，所以前端必须先构建。
 
+以上三步 `build-image.sh` 会全部代劳，包括自动按宿主架构选 `GOARCH`。
+
 ### 4. 构建镜像
 
 **必须用 `Dockerfile.local`**，不能用仓库自带的 `Dockerfile` —— 后者要拉 dockerfile
 frontend、python 基础镜像和 apt/Playwright 全套，受限网络下跑不通。理由见该文件头部注释。
 
 ```bash
-docker build -f Dockerfile.local -t artex:custom .
+docker build -f Dockerfile.local -t artex:custom .    # 等价于 ./build-image.sh
 ```
 
 `Dockerfile.local` 的基础镜像：

@@ -120,7 +120,10 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: autumn27/artex
+          # 上游的 autumn27/artex 仓库已下线，推送会失败。改用我们自己的
+          # 镜像仓库；GHCR 需在仓库变量里配 DOCKER_IMAGE（默认 ghcr.io/darkkid0/artex），
+          # 并把 secrets.DOCKERHUB_USERNAME/TOKEN 换成对应 registry 的凭据。
+          images: ${{ vars.DOCKER_IMAGE || 'ghcr.io/darkkid0/artex' }}
           tags: |
             type=ref,event=tag
             type=raw,value=latest

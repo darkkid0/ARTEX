@@ -27,6 +27,20 @@ ok() { printf '\033[32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[!]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# 把 web/out/ 同步到 server/webui/dist/，语义对齐 `rsync -a --delete`。
+# rsync 并非各发行版默认安装（Debian/Ubuntu 的最小镜像常常没有），缺失时
+# 不应让整个构建硬失败——这里退化成 find -delete + cp -a，行为等价。
+sync_dir() {
+  local src="$1" dst="$2"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$src" "$dst/"
+    return 0
+  fi
+  mkdir -p "$dst"
+  find "$dst" -mindepth 1 -delete
+  cp -a "$src". "$dst/"
+}
+
 usage() {
   cat <<'EOF'
 用法：
@@ -115,15 +129,13 @@ if [ "${ARTEX_SKIP_FRONTEND:-0}" = "1" ]; then
   [ -d server/webui/dist ] || die "ARTEX_SKIP_FRONTEND=1 但 server/webui/dist 不存在"
 else
   command -v npm >/dev/null 2>&1 || die "未检测到 npm（前端静态构建需要 Node.js/npm）"
-  command -v rsync >/dev/null 2>&1 || die "未检测到 rsync"
   info "构建前端静态资源"
   if [ "${ARTEX_SKIP_NPM_CI:-0}" != "1" ]; then
     (cd web && npm ci)
   fi
   (cd web && npm run build:static)
   info "同步前端资源到 server/webui/dist"
-  mkdir -p server/webui/dist
-  rsync -a --delete web/out/ server/webui/dist/
+  sync_dir web/out server/webui/dist
 fi
 
 compress_binary() {

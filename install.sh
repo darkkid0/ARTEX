@@ -45,8 +45,24 @@ install_docker(){
   else
     info "沿用已存在的 .env"
   fi
-  info "拉取镜像并启动…"
-  docker compose pull || true
+  # 官方原版在这里 `docker compose pull || true` 然后直接 up——但上游 Docker Hub
+  # 镜像已下线，新机必然拉取失败。改为：本地已有镜像就直接用，没有则先尝试拉取，
+  # 拉不到就从源码构建（build-image.sh），保证新机一键可部署。
+  local img tag
+  img="$(grep -E '^ARTEX_IMAGE=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
+  tag="$(grep -E '^ARTEX_TAG=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'\''[:space:]')"
+  img="${img:-artex}"; tag="${tag:-custom}"
+
+  if docker image inspect "${img}:${tag}" >/dev/null 2>&1; then
+    ok "本地已有镜像 ${img}:${tag}"
+  elif docker pull "${img}:${tag}" >/dev/null 2>&1; then
+    ok "已拉取镜像 ${img}:${tag}"
+  else
+    warn "本地无 ${img}:${tag} 且 registry 拉取失败，改为从源码构建…"
+    ./build-image.sh -i "$img" -t "$tag" || die "构建镜像失败"
+  fi
+
+  info "启动服务…"
   docker compose up -d
   ok "启动完成 → http://localhost:8787"
   info "查看日志：docker compose logs -f artex"

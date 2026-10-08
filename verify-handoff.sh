@@ -131,6 +131,35 @@ else
   info "未找到数据库容器 ${PG}，跳过数据库检查"
 fi
 
+echo "=== 9. 部署配置（断供自检）==="
+# 上游 Docker Hub 镜像 autumn27/artex 已下线。任何仍指向它的配置都会让新机
+# 在 docker compose pull 阶段直接失败，这是实际踩过的坑，所以固化成检查项。
+compose_img=$(grep -E "^\s+image:" docker-compose.yml 2>/dev/null | grep -v postgres | head -1 | sed 's/.*image:[[:space:]]*//' || true)
+case "$compose_img" in
+  *autumn27/artex*)
+    bad "docker-compose.yml 仍指向已下线的 $compose_img —— 新机无法拉取。
+         改成 \${ARTEX_IMAGE:-artex}:\${ARTEX_TAG:-custom}（本地构建产物）" ;;
+  ''|*:*) pass "docker-compose.yml 镜像：${compose_img:-未指定}" ;;
+esac
+if [ -f .env ] && grep -qE '^ARTEX_TAG=latest' .env 2>/dev/null; then
+  bad ".env 里 ARTEX_TAG=latest —— 与本地构建标签(custom)不符，compose 找不到镜像"
+elif [ -f .env ]; then
+  pass ".env 镜像标签：$(grep -E '^ARTEX_TAG=' .env | head -1 | cut -d= -f2-)"
+else
+  info "无 .env（新机首次部署时用 .env.example 创建）"
+fi
+base_from=$(grep -E "^FROM " Dockerfile.local 2>/dev/null | head -1 | awk '{print $2}' || true)
+case "$base_from" in
+  *autumn27/artex*)
+    bad "Dockerfile.local 基础镜像仍是 $base_from —— 该源已 404，改用 ghcr.io/darkkid0/artex:base@sha256:…" ;;
+  *ghcr.io/darkkid0/artex*)
+    pass "Dockerfile.local 基础镜像：${base_from##*@}" ;;
+  '') info "无 Dockerfile.local" ;;
+esac
+for f in build-image.sh build.sh install.sh .env.example; do
+  [ -f "$f" ] && pass "$f 就位" || bad "缺 $f"
+done
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "全部通过。"

@@ -191,13 +191,19 @@ POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@sha256:1a66d744c1b459e1
 ### 离线兜底（不依赖任何 registry）
 
 ```bash
-gunzip -c artex-base-2.37G.tar.gz      | docker load   # ~611MB，运行时工具链
-gunzip -c postgres-16-alpine.tar.gz    | docker load   # ~110MB，数据库
-docker tag autumn27/artex:latest   ghcr.io/darkkid0/artex:base
-docker tag postgres:16-alpine      ghcr.io/darkkid0/artex:postgres-16-alpine
+gunzip -c artex-base-2.37G.tar.gz   | docker load   # ~611MB，运行时工具链
+gunzip -c postgres-16-alpine.tar.gz | docker load   # ~110MB，数据库
+
+# 载入后按 compose 期望的名字重打 tag（两个都要）
+docker tag autumn27/artex:latest ghcr.io/darkkid0/artex:base
+docker tag postgres:16-alpine    ghcr.io/darkkid0/artex:postgres-16-alpine
 ```
 
 两个 tar 都附带同名 `.sha256`，可用 `sha256sum -c` 校验完整性。
+
+> digest 锁定的引用（`…@sha256:…`）对本地包同样有效：`docker load` 后按上面的名字
+> 打 tag 即可，compose 不会因为 digest 与 registry 上的不一致而拒绝本地包。
+> 若你的 `.env` 里设了 `POSTGRES_IMAGE=…@sha256:…`，tag 名要完全一致。
 
 ## 备份
 

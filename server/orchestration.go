@@ -702,26 +702,43 @@ func (s *Server) reseedWorkerPrompt() {
 // 已相等就跳过(全新库 seedPrompts 已写入最新默认,不会产生重复版本);不相等则用版本管理
 // 【追加一个新版本】并切过去,旧版本仍留在历史里,用户若自定义过可从版本记录找回。
 //
-// 刻意只列【本次真的改了正文】的 agent:漏掉一个,它就永远停在旧提示词上;多列一个
-// 没改的,就会平白覆盖用户在 UI 里的自定义。改 Go 常量后记得同步这张表并 bump flag。
+// promptReseedTarget is one agent whose 段[A] body reseedBuiltinPrompts pushes into an
+// existing DB, paired with the code default it should be reset to.
+//
+// 覆盖范围由 builtinPromptReseedTargets 固定,且有测试钉住:每个 BuiltinPromptSeeds 的
+// key 都必须在里面。漏一个,它就永远停在旧提示词上 —— goals 就是这样丢掉了
+// 「绝不登记 override」禁令,而它的 7 个兄弟 agent 都拿到了。
+type promptReseedTarget struct{ key, tmpl string }
+
+// builtinPromptReseedTargets lists every agent whose default body must be pushed into an
+// already-seeded DB when the code default changes.
+//
+// It MUST cover every key in agent.BuiltinPromptSeeds() plus reporter/retester (whose
+// defaults are standalone constants). SeedPromptIfEmpty is first-insert-only, so an agent
+// missing here silently keeps its old prompt forever — that is exactly how goals ended up
+// without the「绝不登记 override」禁令 while all seven siblings had theirs.
+// TestReseedCoversEveryBuiltinAgent enforces the invariant.
+func builtinPromptReseedTargets() []promptReseedTarget {
+	seeds := agent.BuiltinPromptSeeds()
+	out := make([]promptReseedTarget, 0, len(seeds)+2)
+	for _, key := range []string{"goals", "planner", "mainagent", "worker", "auto", "pentest"} {
+		out = append(out, promptReseedTarget{key, seeds[key]})
+	}
+	// reporter/retester 是自定义 agent,不在 BuiltinPromptSeeds 里,默认正文各自一份常量。
+	return append(out,
+		promptReseedTarget{"reporter", agent.ReporterDefaultPrompt},
+		promptReseedTarget{"retester", agent.RetesterDefaultPrompt},
+	)
+}
+
 func (s *Server) reseedBuiltinPrompts() {
-	const flag = "builtin_prompts_human_directive_v2"
+	const flag = "builtin_prompts_human_directive_v3"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
 		return
 	}
 	defer func() { _ = s.m.pg.SetSetting(flag, "true") }() // 无论成功与否只尝试一次
 
-	// 用切片而非 map:刷新顺序固定,日志可复现。
-	targets := []struct{ key, tmpl string }{
-		{"planner", agent.BuiltinPromptSeeds()["planner"]},
-		{"mainagent", agent.BuiltinPromptSeeds()["mainagent"]},
-		{"worker", agent.BuiltinPromptSeeds()["worker"]},
-		{"auto", agent.BuiltinPromptSeeds()["auto"]},
-		{"pentest", agent.BuiltinPromptSeeds()["pentest"]},
-		// reporter/retester 是自定义 agent,不在 BuiltinPromptSeeds 里,默认正文各自一份常量。
-		{"reporter", agent.ReporterDefaultPrompt},
-		{"retester", agent.RetesterDefaultPrompt},
-	}
+	targets := builtinPromptReseedTargets()
 	for _, t := range targets {
 		if t.tmpl == "" {
 			log.Printf("[prompts] %s 无内置默认正文,跳过", t.key)
@@ -742,7 +759,7 @@ func (s *Server) reseedBuiltinPrompts() {
 			log.Printf("[prompts] %s 提示词重刷为新默认失败: %v", t.key, err)
 			continue
 		}
-		log.Printf("[prompts] %s 提示词已追加新默认版本(加入「人类/主 agent 明确指令视为已获授权」,并修复批量替换损坏的语句)", t.key)
+		log.Printf("[prompts] %s 提示词已追加新默认版本(与代码默认对齐：人类指令授权条款 + override 禁令 + 修复批量替换损坏的语句)", t.key)
 	}
 }
 

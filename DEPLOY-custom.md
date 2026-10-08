@@ -171,27 +171,22 @@ git merge upstream/main
 | 依赖 | 原来源 | 现状 |
 |---|---|---|
 | artex 运行时基础镜像 | `autumn27/artex`（**已 404**） | `ghcr.io/darkkid0/artex:base@sha256:5d6eb723...`，公开免登录，`Dockerfile.local` 内 digest 锁定 |
-| PostgreSQL | `postgres:16-alpine`（Docker Hub） | 默认不变；`POSTGRES_IMAGE` 可覆盖为自有镜像 |
+| PostgreSQL | `postgres:16-alpine`（Docker Hub） | 默认不变；`POSTGRES_IMAGE` 可覆盖为自有镜像（**已推送，见下**） |
 
-`docker-compose.yml` 里 postgres 镜像可经 `.env` 覆盖：
-
-```bash
-POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@sha256:<digest>
-```
-
-### 推送 postgres 镜像到 GHCR
+postgres 镜像可经 `.env` 覆盖：
 
 ```bash
-docker login ghcr.io -u darkkid0          # 需要 Packages:write 权限的 PAT
-docker tag postgres:16-alpine ghcr.io/darkkid0/artex:postgres-16-alpine
-docker push ghcr.io/darkkid0/artex:postgres-16-alpine
-DIGEST=$(docker image inspect ghcr.io/darkkid0/artex:postgres-16-alpine \
-  --format '{{index .RepoDigests 0}}' | cut -d@ -f2)
-echo "POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@${DIGEST}"
+POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551
 ```
 
-> 注意：GHCR 上 `darkkid0/postgres` 是个新包，需要在包的 Settings 里把可见性设为
-> Public，否则匿名拉取会 401。用上面 `darkkid0/artex:` 前缀可复用已有包的权限。
+该镜像已推送并验证：
+
+- **匿名免登录可拉**（用空 `DOCKER_CONFIG` 实测）
+- 与官方 `postgres:16-alpine` **11 层逐字节一致**（`docker image inspect` 比对
+  `RootFS.Layers`），容器内实测 `PostgreSQL 16.15`，建表读写正常
+- 配置 digest 与官方不同（`721873c3…` → `1a66d744…`）是推送时重建 manifest 所致，
+  层内容未变
+- 用 digest 而非 tag 锁定：tag 可被覆盖，digest 不会
 
 ### 离线兜底（不依赖任何 registry）
 

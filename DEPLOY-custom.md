@@ -64,21 +64,21 @@ ghcr.io/darkkid0/artex:base@sha256:5d6eb7231231af84c7da357d36c9e1fcd46dd881a3058
 ```
 
 用 **digest 而非 tag** 锁定 —— tag 随时可能被覆盖，digest 不会。该镜像只含运行时
-工具链（python / node 20 / playwright / ripgrep / nmap 等），`Dockerfile.local` 只往里
-替换 `/app/artex` 一个二进制。
+工具链（python 3.12 / node 20 / playwright / ripgrep / nmap 等），`Dockerfile.local`
+只往里替换 `/app/artex` 一个二进制。
 
-**若 `docker pull` 失败，三条退路**（按优先级）：
+该镜像是**公开的**，`docker build` 会自动拉取，**无需 `docker login`**、无需任何
+PAT或令牌。若你的网络访问 GHCR 受限，走下面的退路 ②。
+
+**若拉取失败，两条退路**：
 
 ```bash
-# ① 直接用我们的镜像
-docker pull ghcr.io/darkkid0/artex:base
-
-# ② 离线存档（~611MB，与本仓库同批维护）
+# ① 离线存档（~611MB，需另行获取；gzip 完整性可用同名 .sha256 校验）
 gunzip -c artex-base-2.37G.tar.gz | docker load
 docker tag autumn27/artex:latest ghcr.io/darkkid0/artex:base
 
-# ③ 网络正常时改用仓库自带的 Dockerfile 从头构建
-#    不依赖任何人的镜像，但需拉 python 基础镜像 + apt/Playwright 全套
+# ② 网络正常时改用仓库自带的 Dockerfile 从头构建
+#    完全不依赖任何人的镜像，但需拉 python 基础镜像 + apt/NodeSource/Playwright 全套
 ```
 
 > **关于上游**：官方仓库（`Autumn-27/ARTEX`，后改名 `mssky9527/ARTEX`）与其 Docker Hub
@@ -153,10 +153,13 @@ git merge upstream/main
 
 | 资产 | 位置 |
 |---|---|
-| 运行时基础镜像 | `ghcr.io/darkkid0/artex:base`（digest 见「编译与构建镜像」） |
+| 运行时基础镜像 | `ghcr.io/darkkid0/artex:base`（公开，免登录；digest 见「编译与构建镜像」） |
 | 同上离线副本 | `artex-base-2.37G.tar.gz`（~611MB，含 `.sha256`） |
 | 定制版镜像 | `ghcr.io/darkkid0/artex:<commit>`，或本地 `artex:custom` |
 | 数据库 | `docker exec artex-postgres-1 pg_dump -U artex -d artex -Fc > backup.dump` |
+
+> 公开镜像仍建议留一份离线 tar：GitHub Packages 不承诺长期可用，且 GHCR 在部分
+> 网络环境下不可达。有 tar 就能在任何机器上 `docker load`，彻底不依赖网络。
 
 ## 数据库迁移
 

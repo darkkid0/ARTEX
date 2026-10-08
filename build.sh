@@ -41,6 +41,14 @@ sync_dir() {
   cp -a "$src". "$dst/"
 }
 
+# 把 third_party/goproxy 挂到 GOPROXY 链首位：norma 的上游仓库已 404 且仓库内无
+# vendor/，本地副本可让我们在「上游消失」或「代理响应 takedown」时仍能编译。
+# go.sum 已有该模块哈希，Go 做本地比对，校验未被削弱（无需 GOSUMDB=off）。
+if [ -d third_party/goproxy/github.com/!autumn-27/norma/@v ]; then
+  GOPROXY="file://$(pwd)/third_party/goproxy,${GOPROXY:-https://proxy.golang.org,direct}"
+  export GOPROXY
+fi
+
 usage() {
   cat <<'EOF'
 用法：

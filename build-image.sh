@@ -124,6 +124,23 @@ if [ "$SKIP_FRONTEND" -eq 0 ]; then
 fi
 [ -n "$(ls -A server/webui/dist 2>/dev/null || true)" ] || die "server/webui/dist 为空，-tags embedui 会编译失败"
 
+# ── Go 模块代理接线 ─────────────────────────────────────────────
+# norma 的上游仓库已 404，仓库内也无 vendor/。third_party/goproxy 存放了它
+# v0.4.3 的完整副本，这里把该目录挂到 GOPROXY 链首位：本地副本优先，其余依赖
+# 照常走公共代理。目的是让「上游仓库消失」和「代理响应 takedown」两种情况下
+# 仍能编译。
+#
+# 校验未被削弱：go.sum 里已有该模块哈希，Go 做本地比对，不需要 GOSUMDB=off。
+LOCAL_PROXY="${PWD}/third_party/goproxy"
+if [ -d "$LOCAL_PROXY/github.com/!autumn-27/norma/@v" ]; then
+  export GOPROXY="file://${LOCAL_PROXY},${GOPROXY:-https://proxy.golang.org,direct}"
+  ok "模块代理已本地化：norma 优先取本地副本，其余走 ${GOPROXY##*,}"
+else
+  warn "未找到 third_party/goproxy —— norma 只能依赖公共代理。
+         上游 github.com/Autumn-27/norma 已 404，代理若响应 takedown 将无法编译。
+         详见 third_party/goproxy/README.md"
+fi
+
 # ── 编译二进制 ──────────────────────────────────────────────────
 info "编译后端二进制"
 mkdir -p "dist/${GOARCH_TARGET}"

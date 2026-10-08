@@ -164,6 +164,46 @@ git fetch upstream --tags
 git merge upstream/main
 ```
 
+## 脱离 Docker Hub
+
+新机的 Docker 依赖有两个来源，都已本地化：
+
+| 依赖 | 原来源 | 现状 |
+|---|---|---|
+| artex 运行时基础镜像 | `autumn27/artex`（**已 404**） | `ghcr.io/darkkid0/artex:base@sha256:5d6eb723...`，公开免登录，`Dockerfile.local` 内 digest 锁定 |
+| PostgreSQL | `postgres:16-alpine`（Docker Hub） | 默认不变；`POSTGRES_IMAGE` 可覆盖为自有镜像 |
+
+`docker-compose.yml` 里 postgres 镜像可经 `.env` 覆盖：
+
+```bash
+POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@sha256:<digest>
+```
+
+### 推送 postgres 镜像到 GHCR
+
+```bash
+docker login ghcr.io -u darkkid0          # 需要 Packages:write 权限的 PAT
+docker tag postgres:16-alpine ghcr.io/darkkid0/artex:postgres-16-alpine
+docker push ghcr.io/darkkid0/artex:postgres-16-alpine
+DIGEST=$(docker image inspect ghcr.io/darkkid0/artex:postgres-16-alpine \
+  --format '{{index .RepoDigests 0}}' | cut -d@ -f2)
+echo "POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@${DIGEST}"
+```
+
+> 注意：GHCR 上 `darkkid0/postgres` 是个新包，需要在包的 Settings 里把可见性设为
+> Public，否则匿名拉取会 401。用上面 `darkkid0/artex:` 前缀可复用已有包的权限。
+
+### 离线兜底（不依赖任何 registry）
+
+```bash
+gunzip -c artex-base-2.37G.tar.gz      | docker load   # ~611MB，运行时工具链
+gunzip -c postgres-16-alpine.tar.gz    | docker load   # ~110MB，数据库
+docker tag autumn27/artex:latest   ghcr.io/darkkid0/artex:base
+docker tag postgres:16-alpine      ghcr.io/darkkid0/artex:postgres-16-alpine
+```
+
+两个 tar 都附带同名 `.sha256`，可用 `sha256sum -c` 校验完整性。
+
 ## 备份
 
 以下资产需自行保管，GitHub 与 Docker Hub 都不保证长期可用：
@@ -172,6 +212,9 @@ git merge upstream/main
 |---|---|
 | 运行时基础镜像 | `ghcr.io/darkkid0/artex:base`（公开，免登录；digest 见「编译与构建镜像」） |
 | 同上离线副本 | `artex-base-2.37G.tar.gz`（~611MB，含 `.sha256`） |
+| PostgreSQL 镜像 | 默认 Docker Hub；可换 `ghcr.io/darkkid0/artex:postgres-16-alpine`（见「脱离 Docker Hub」） |
+| 同上离线副本 | `postgres-16-alpine.tar.gz`（~110MB，含 `.sha256`） |
+| Go 模块 `norma` | 仓库内 `third_party/goproxy/`（532KB，随 git 分发，已接进 `build-image.sh`） |
 | 定制版镜像 | `ghcr.io/darkkid0/artex:<commit>`，或本地 `artex:custom` |
 | 数据库 | `docker exec artex-postgres-1 pg_dump -U artex -d artex -Fc > backup.dump` |
 

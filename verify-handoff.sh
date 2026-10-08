@@ -160,24 +160,29 @@ for f in build-image.sh build.sh install.sh update.sh .env.example; do
   [ -f "$f" ] && pass "$f 就位" || bad "缺 $f"
 done
 
-# 上游仓库已不可达，但 Go 模块依赖 github.com/Autumn-27/norma 仍需从模块代理
-# 获取（仓库内无 vendor/）。代理若不再缓存该版本，新机将完全无法编译——这是
-# 当前最大的单点依赖，值得每次自检都确认一次。
+# 上游仓库已不可达，但 Go 模块依赖 github.com/Autumn-27/norma 仍需获取（仓库内无
+# vendor/）。third_party/goproxy 存放了本地副本，这里校验它是否与 go.mod 声明一致、
+# 能否在完全断网（代理链以 off 结尾）时提供该模块。
 norma=$(grep -oE 'github\.com/Autumn-27/norma v[^ ]+' go.mod 2>/dev/null | head -1 | awk '{print $2}')
 if [ -n "$norma" ]; then
-  # 已下载 = 编译无需联网。用 go.mod 而非 go list -m 取版本：后者在依赖缺失时
-  # 自己也会失败，会把"取不到模块"误报成"未启用该依赖"。
-  if [ -d "vendor/github.com/Autumn-27/norma" ] \
-     || go list -m -f '{{.Dir}}' github.com/Autumn-27/norma 2>/dev/null | grep -q .; then
-    pass "norma ${norma} 已就绪（模块缓存或 vendor）"
-  elif [ "${SKIP_NET:-0}" = "1" ]; then
-    info "norma ${norma} 未下载（SKIP_NET=1，跳过网络探测）"
-  elif timeout 90 go mod download github.com/Autumn-27/norma 2>/dev/null; then
-    pass "norma ${norma} 可从模块代理获取"
+  vdir="third_party/goproxy/github.com/!autumn-27/norma/@v"
+  if [ -f "$vdir/$norma.zip" ] && [ -f "$vdir/$norma.mod" ] && [ -f "$vdir/$norma.info" ]; then
+    if [ "${SKIP_NET:-0}" = "1" ]; then
+      pass "norma ${norma} 本地副本就位（SKIP_NET=1，未做解析验证）"
+    else
+      _tc=$(mktemp -d)
+      if env GOMODCACHE="$_tc" GOPROXY="file://$(pwd)/third_party/goproxy,off" \
+             GOFLAGS=-mod=mod timeout 90 go mod download github.com/Autumn-27/norma 2>/dev/null; then
+        pass "norma ${norma} 本地副本有效，且完全断网可解析（go.sum 本地校验）"
+      else
+        bad "norma ${norma} 本地副本无法解析 —— 请按 third_party/goproxy/README.md 的维护段重新抓取"
+      fi
+      rm -rf "$_tc"
+    fi
   else
-    bad "norma ${norma} 无法从模块代理获取 —— 新机将无法编译。
-         上游 github.com/Autumn-27/norma 已 404，仓库内也无 vendor/。
-         退路：把 GOMODCACHE 里该模块目录打包，或改用完整 vendor/ 目录。"
+    bad "缺 norma ${norma} 的本地副本（$vdir/）
+         上游 github.com/Autumn-27/norma 已 404 且仓库内无 vendor/，
+         代理若响应 takedown 则新机无法编译。抓取方法见 third_party/goproxy/README.md"
   fi
 else
   info "go.mod 未声明 norma 依赖"

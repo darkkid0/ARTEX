@@ -1,6 +1,10 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # 默认仍是官方 postgres:16-alpine。它与之前出问题的 autumn27/artex 是同一类
+    # 依赖（Docker Hub 单一来源）。想彻底脱离 Docker Hub，在 .env 里设：
+    #   POSTGRES_IMAGE=ghcr.io/darkkid0/artex:postgres-16-alpine@sha256:<digest>
+    # 镜像的制作与推送命令见 DEPLOY-custom.md「脱离 Docker Hub」。
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-artex}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}

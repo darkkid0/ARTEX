@@ -109,6 +109,13 @@ JSON
   command -v go >/dev/null 2>&1 || die "未检测到 Go，请先安装 Go（>=1.26）：https://go.dev/dl/"
   ok "Go: $(go version)"
 
+  # norma 上游仓库已 404 且仓库内无 vendor/，优先使用 third_party/goproxy 里的
+  # 本地模块副本。go.sum 已有哈希，校验走本地比对，无需关闭 GOSUMDB。
+  if [ -d third_party/goproxy/github.com/!autumn-27/norma/@v ]; then
+    export GOPROXY="file://$(pwd)/third_party/goproxy,${GOPROXY:-https://proxy.golang.org,direct}"
+    ok "模块代理已本地化（norma 优先取仓库内副本）"
+  fi
+
   # 内嵌前端需要 node 出静态产物
   if command -v npm >/dev/null 2>&1; then
     info "构建前端静态产物…"
